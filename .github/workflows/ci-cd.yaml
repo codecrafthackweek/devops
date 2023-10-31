@@ -1,0 +1,85 @@
+
+# This is a basic workflow to help you get started with Actions
+
+name: codecraft
+
+# Controls when the workflow will run
+on:
+  # Triggers the workflow on push or pull request events but only for the "main" branch
+  push:
+    branches: [ "main" ]
+  
+  workflow_dispatch:
+
+env:
+  # isto não é necessario apenas saiba que existe! 
+  AWS_ACCESS_KEY_ID: ${{ secrets.AWS_ACCESS_KEY_ID }}
+  AWS_SECRET_ACCESS_KEY: ${{ secrets.AWS_SECRET_ACCESS_KEY }}
+  AWS_DEFAULT_REGION: 'us-east-1'
+
+
+# A workflow run is made up of one or more jobs that can run sequentially or in parallel
+jobs:
+  # This workflow contains a single job called "build"
+  build:
+    # The type of runner that the job will run on
+    runs-on: ubuntu-latest
+
+    # Steps represent a sequence of tasks that will be executed as part of the job
+    steps:
+      # Checks-out your repository under $GITHUB_WORKSPACE, so your job can access it
+      - uses: actions/checkout@v3
+
+      # Runs a single command using the runners shell
+      - name: Run a one-line script
+        run: echo Hello, world!
+
+      - name: Setup SSH Keys
+        run: |
+          mkdir -p ~/.ssh
+          echo "${{ secrets.SSH_PRIVATE_KEY }}" > ~/.ssh/id_rsa
+          echo "${{ secrets.SSH_PUBLIC_KEY }}" > ~/.ssh/id_rsa.pub
+          chmod 600 ~/.ssh/id_rsa
+          chmod 644 ~/.ssh/id_rsa.pub
+          ssh-keyscan github.com >> ~/.ssh/known_hosts
+        
+      - name: Setup Terraform
+        uses: hashicorp/setup-terraform@v1
+        with:
+          # terraform_version: '1.0.0' - removido
+          terraform_wrapper: false # adicionado
+
+      - name: Terraform Init
+        run: terraform init
+
+      - name: Terraform Apply
+        # run: terraform apply -auto-approve -var="create_key=true" - alterado
+        run: terraform apply -auto-approve
+
+      - name: Set INSTANCE_IP environment variable # adicionado
+        run: echo "instance_ip=`terraform output -raw instance_ip`" >> $GITHUB_ENV # adicionado
+
+      - name: Wait for instance to be ready
+        run: sleep 60  # waits for 60 seconds
+
+      - name: Setup Python
+        uses: actions/setup-python@v2
+        with:
+          python-version: '3.x'
+
+      - name: Install Ansible
+        run: pip install ansible
+
+      - name: Create Ansible Inventory
+        run: |
+          echo "[codecraft_vm]" > inventory.ini
+          echo "${instance_ip}" >> inventory.ini
+          echo "" >> inventory.ini
+          cat inventory.ini
+          
+      - name: host key # adicionado
+        run: ssh-keyscan ${instance_ip} >> ~/.ssh/known_hosts # adicionado
+
+      - name: Run Ansible Playbook
+        # run: ansible-playbook -i inventory.ini playbook.yml - alterado
+        run: ansible-playbook -i inventory.ini ansible-playbook-install-docker.yml
